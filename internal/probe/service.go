@@ -2,7 +2,6 @@ package probe
 
 import (
 	"context"
-	"time"
 
 	"solo-0014-zone-rollout-control/internal/domain"
 	"solo-0014-zone-rollout-control/internal/platform"
@@ -113,8 +112,8 @@ func (s *Service) Submit(
 		lease.FinishedAt = &finishedAt
 		lease.ProbeID = result.ID
 		state.Leases[leaseID] = lease
-		settleLeaseDeadline(state, leaseID, finishedAt)
-		if node.State == domain.NodeLeased {
+		store.RemoveLeaseDeadline(state, leaseID)
+		if node.State == domain.NodeLeased && !store.HasOtherClaimedLease(state, node.ID, leaseID) {
 			node.State = domain.NodeReady
 			node.Version++
 			node.UpdatedAt = now
@@ -127,21 +126,4 @@ func (s *Service) Submit(
 		return nil
 	})
 	return result, err
-}
-
-func pointer(value time.Time) *time.Time {
-	return &value
-}
-
-func settleLeaseDeadline(state *domain.State, leaseID string, settledAt time.Time) {
-	for index := range state.LeaseDeadlines {
-		deadline := &state.LeaseDeadlines[index]
-		if deadline.LeaseID != leaseID {
-			continue
-		}
-		if deadline.ExpiresAt.After(settledAt) {
-			deadline.ExpiresAt = deadline.ExpiresAt.UTC().Truncate(time.Second)
-		}
-		return
-	}
 }

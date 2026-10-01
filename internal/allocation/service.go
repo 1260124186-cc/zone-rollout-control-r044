@@ -143,7 +143,8 @@ func (s *Service) Release(ctx context.Context, leaseID string) (domain.NodeLease
 			return domain.NotFound("lease", leaseID)
 		}
 		if lease.State == domain.LeaseReleased || lease.State == domain.LeaseExpired {
-			removeLeaseDeadlinesForNode(state, lease.NodeID)
+			// A repeated release retry must not touch later leases on the
+			// same node; the lease is already finished and idempotent.
 			result = lease
 			return nil
 		}
@@ -163,8 +164,10 @@ func (s *Service) Release(ctx context.Context, leaseID string) (domain.NodeLease
 		lease.State = domain.LeaseReleased
 		lease.FinishedAt = &finishedAt
 		state.Leases[leaseID] = lease
-		removeLeaseDeadlinesForNode(state, node.ID)
-		if node.State == domain.NodeLeased {
+		store.RemoveLeaseDeadline(state, leaseID)
+		// Only free the node if it is still occupied by this lease and no
+		// later lease on the same node exists.
+		if node.State == domain.NodeLeased && !store.HasOtherClaimedLease(state, node.ID, leaseID) {
 			node.State = domain.NodeReady
 			node.Version++
 			node.UpdatedAt = now
@@ -197,13 +200,21 @@ func expireLeases(state *domain.State, now time.Time) int {
 		}
 		lease, ok := state.Leases[deadline.LeaseID]
 		if !ok {
+			// Orphaned deadline from a lease that no longer exists.
+			continue
+		}
+		if lease.State != domain.LeaseClaimed || lease.NodeID != deadline.NodeID {
+			// The lease already finished (released/reported/expired) or the
+			// deadline no longer matches the lease identity; drop it without
+			// touching any later lease on the same node.
 			continue
 		}
 		finishedAt := now
 		lease.State = domain.LeaseExpired
 		lease.FinishedAt = &finishedAt
 		state.Leases[lease.ID] = lease
-		if node, ok := state.Nodes[deadline.NodeID]; ok && node.State == domain.NodeLeased {
+		if node, ok := state.Nodes[deadline.NodeID]; ok && node.State == domain.NodeLeased &&
+			!store.HasOtherClaimedLease(state, node.ID, lease.ID) {
 			node.State = domain.NodeReady
 			node.Version++
 			node.UpdatedAt = now
@@ -217,14 +228,4 @@ func expireLeases(state *domain.State, now time.Time) int {
 
 func recordLeaseDeadline(state *domain.State, deadline domain.LeaseDeadline) {
 	state.LeaseDeadlines = append(state.LeaseDeadlines, deadline)
-}
-
-func removeLeaseDeadlinesForNode(state *domain.State, nodeID string) {
-	active := state.LeaseDeadlines[:0]
-	for _, deadline := range state.LeaseDeadlines {
-		if deadline.NodeID != nodeID {
-			active = append(active, deadline)
-		}
-	}
-	state.LeaseDeadlines = active
 }
