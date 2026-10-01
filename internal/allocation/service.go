@@ -143,7 +143,7 @@ func (s *Service) Release(ctx context.Context, leaseID string) (domain.NodeLease
 			return domain.NotFound("lease", leaseID)
 		}
 		if lease.State == domain.LeaseReleased || lease.State == domain.LeaseExpired {
-			removeLeaseDeadlinesForNode(state, lease.NodeID)
+			domain.RemoveLeaseDeadline(state, leaseID, lease.NodeID)
 			result = lease
 			return nil
 		}
@@ -160,11 +160,12 @@ func (s *Service) Release(ctx context.Context, leaseID string) (domain.NodeLease
 			})
 		}
 		finishedAt := now
+		isCurrentLease := domain.HasLeaseDeadline(state, leaseID, node.ID)
 		lease.State = domain.LeaseReleased
 		lease.FinishedAt = &finishedAt
 		state.Leases[leaseID] = lease
-		removeLeaseDeadlinesForNode(state, node.ID)
-		if node.State == domain.NodeLeased {
+		domain.RemoveLeaseDeadline(state, leaseID, node.ID)
+		if isCurrentLease {
 			node.State = domain.NodeReady
 			node.Version++
 			node.UpdatedAt = now
@@ -188,17 +189,22 @@ func (s *Service) ExpireDue(ctx context.Context) (int, error) {
 }
 
 func expireLeases(state *domain.State, now time.Time) int {
+	domain.ReconcileLeaseDeadlines(state)
+	dueDeadlines := state.LeaseDeadlines
+	active := make([]domain.LeaseDeadline, 0, len(dueDeadlines))
+	state.LeaseDeadlines = active
+
 	count := 0
-	active := make([]domain.LeaseDeadline, 0, len(state.LeaseDeadlines))
-	for _, deadline := range state.LeaseDeadlines {
+	for _, deadline := range dueDeadlines {
+		lease := state.Leases[deadline.LeaseID]
+		if lease.NodeID != deadline.NodeID || lease.State != domain.LeaseClaimed {
+			continue
+		}
 		if deadline.ExpiresAt.After(now) {
 			active = append(active, deadline)
 			continue
 		}
-		lease, ok := state.Leases[deadline.LeaseID]
-		if !ok {
-			continue
-		}
+
 		finishedAt := now
 		lease.State = domain.LeaseExpired
 		lease.FinishedAt = &finishedAt
@@ -217,14 +223,4 @@ func expireLeases(state *domain.State, now time.Time) int {
 
 func recordLeaseDeadline(state *domain.State, deadline domain.LeaseDeadline) {
 	state.LeaseDeadlines = append(state.LeaseDeadlines, deadline)
-}
-
-func removeLeaseDeadlinesForNode(state *domain.State, nodeID string) {
-	active := state.LeaseDeadlines[:0]
-	for _, deadline := range state.LeaseDeadlines {
-		if deadline.NodeID != nodeID {
-			active = append(active, deadline)
-		}
-	}
-	state.LeaseDeadlines = active
 }

@@ -108,13 +108,14 @@ func (s *Service) Submit(
 			PayloadFingerprint: fingerprint,
 		}
 		state.Probes[result.ID] = result
-		lease.State = domain.LeaseReported
 		finishedAt := now
+		isCurrentLease := domain.HasLeaseDeadline(state, leaseID, lease.NodeID)
+		lease.State = domain.LeaseReported
 		lease.FinishedAt = &finishedAt
 		lease.ProbeID = result.ID
 		state.Leases[leaseID] = lease
-		settleLeaseDeadline(state, leaseID, finishedAt)
-		if node.State == domain.NodeLeased {
+		domain.RemoveLeaseDeadline(state, leaseID, lease.NodeID)
+		if isCurrentLease {
 			node.State = domain.NodeReady
 			node.Version++
 			node.UpdatedAt = now
@@ -127,21 +128,4 @@ func (s *Service) Submit(
 		return nil
 	})
 	return result, err
-}
-
-func pointer(value time.Time) *time.Time {
-	return &value
-}
-
-func settleLeaseDeadline(state *domain.State, leaseID string, settledAt time.Time) {
-	for index := range state.LeaseDeadlines {
-		deadline := &state.LeaseDeadlines[index]
-		if deadline.LeaseID != leaseID {
-			continue
-		}
-		if deadline.ExpiresAt.After(settledAt) {
-			deadline.ExpiresAt = deadline.ExpiresAt.UTC().Truncate(time.Second)
-		}
-		return
-	}
 }

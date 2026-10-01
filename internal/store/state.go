@@ -1,8 +1,6 @@
 package store
 
 import (
-	"sort"
-
 	"solo-0014-zone-rollout-control/internal/domain"
 )
 
@@ -53,26 +51,5 @@ func normalize(state domain.State) domain.State {
 }
 
 func reconcileLeaseDeadlines(state *domain.State) {
-	deadlines := make(map[string]domain.LeaseDeadline)
-	for _, lease := range state.Leases {
-		current, exists := deadlines[lease.NodeID]
-		if exists && !lease.ExpiresAt.Before(current.ExpiresAt) {
-			continue
-		}
-		deadlines[lease.NodeID] = domain.LeaseDeadline{
-			LeaseID:   lease.ID,
-			NodeID:    lease.NodeID,
-			ExpiresAt: lease.ExpiresAt,
-		}
-	}
-	state.LeaseDeadlines = state.LeaseDeadlines[:0]
-	for _, deadline := range deadlines {
-		state.LeaseDeadlines = append(state.LeaseDeadlines, deadline)
-	}
-	sort.Slice(state.LeaseDeadlines, func(i, j int) bool {
-		if state.LeaseDeadlines[i].NodeID != state.LeaseDeadlines[j].NodeID {
-			return state.LeaseDeadlines[i].NodeID < state.LeaseDeadlines[j].NodeID
-		}
-		return state.LeaseDeadlines[i].LeaseID < state.LeaseDeadlines[j].LeaseID
-	})
+	domain.ReconcileLeaseDeadlines(state)
 }
